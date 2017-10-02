@@ -19,3 +19,4 @@
 web/data/*
 !web/data/.gitkeep
 .DS_Store
+*.php~
