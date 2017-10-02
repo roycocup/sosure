@@ -16,3 +16,6 @@
 /vendor/
 /web/bundles/
 .idea/*
+web/data/*
+!web/data/.gitkeep
+.DS_Store
