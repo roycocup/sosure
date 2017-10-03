@@ -21,6 +21,7 @@ class ImportDataCommand extends ContainerAwareCommand
     private $_incomeFilename;
     private $_mappingFilename;
     private $_em; // entity manager
+    private $_connection;
 
     protected function configure()
     {
@@ -40,6 +41,7 @@ class ImportDataCommand extends ContainerAwareCommand
         // making input and output available to to the rest of the class
         $this->output = $output;
         $this->input = $input;
+        $this->_connection = $this->_em->getConnection();
 
         // clear tables
         $this->clearTables();
@@ -66,7 +68,7 @@ class ImportDataCommand extends ContainerAwareCommand
         $output->writeln('Mapping post codes');
         $this->updatePostCodes();
 
-        // generate fake users
+        // Todo: generate fake users
         // associate users
 
         $output->writeln('All data imported.');
@@ -100,11 +102,17 @@ class ImportDataCommand extends ContainerAwareCommand
 
     private function _executeSQL($sql)
     {
-        $sql = "$sql;";
-        $connection = $this->_em->getConnection();
-        $stmt = $connection->prepare($sql);
-        $stmt->execute();
-        $stmt->closeCursor();
+        try{
+            $sql = "$sql;";
+            $stmt = $this->_connection->prepare($sql);
+            $stmt->execute();
+            $stmt->closeCursor();
+            $stmt = null;
+        } catch (\Exception $e) {
+            $this->output->writeLn("Caught an error on executeSQL function");
+            echo $e->getMessage();
+        }
+
     }
 
     // this will create a temporary table visible only during this session
@@ -113,9 +121,9 @@ class ImportDataCommand extends ContainerAwareCommand
         $sql = "DROP TABLE IF EXISTS {$tableName}";
         $this->_executeSQL($sql);
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$tableName} (
+        $sql = "CREATE TABLE {$tableName} (
                   id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
-                  postcode VARCHAR(7), 
+                  postcode VARCHAR(10), 
                   msoa VARCHAR(10)
                   )";
         $this->_executeSQL($sql);
@@ -133,6 +141,8 @@ class ImportDataCommand extends ContainerAwareCommand
 
     // import all data into the database so that we can update the income table
     // with a simple update in sql rather than a realtime update as we import the CSV
+    // This also would have worked via the LOAD DATA INFILE if the  --secure-file-priv option is disabled, but unsure
+    // about mysql configs on other machines.
     public function importMappingData()
     {
         $tablename = "temp_msoa_postcode";
@@ -149,6 +159,7 @@ class ImportDataCommand extends ContainerAwareCommand
             if ($row % 1000 == 0)
                 $this->output->writeLn($row . ' rows inserted');
             $row++;
+
         }
 
         $this->output->writeLn('Temporary table imported');
@@ -159,7 +170,7 @@ class ImportDataCommand extends ContainerAwareCommand
     // this will update the postcode on the income table with the data from the temporary table "msoa_postcode"
     public function updatePostCodes()
     {
-        $sql = "UPDATE user_income ui,temp_msoa_postcode t set ui.postcode = t.postcode where ui.msoa_code = t.msoa";
+        $sql = "UPDATE user_income ui,temp_msoa_postcode t SET ui.postcode = t.postcode WHERE ui.msoa_code = t.msoa";
         $this->_executeSQL($sql);
     }
 
