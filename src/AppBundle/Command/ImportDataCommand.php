@@ -33,6 +33,7 @@ class ImportDataCommand extends ContainerAwareCommand
         ;
     }
 
+    // Main execution controller
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $this->_em = $this->getContainer()->get('doctrine')->getManager();
@@ -57,8 +58,13 @@ class ImportDataCommand extends ContainerAwareCommand
         $output->writeln('Importing income data');
         $this->importIncomeData();
 
-        $output->writeln('Mapping post codes');
+        $start = microtime(true);
+        $output->writeln('Importing post codes');
         $this->importMappingData();
+        $output->writeln((microtime(true) - $start) / 60 . " minutes taken thus far");
+
+        $output->writeln('Mapping post codes');
+        $this->updatePostCodes();
 
         // generate fake users
         // associate users
@@ -79,13 +85,13 @@ class ImportDataCommand extends ContainerAwareCommand
         $this->output->writeln('Deleting... ');
         $userTable = $this->_em->getClassMetadata('AppBundle:User')->getTableName();
         $userIncomeTable = $this->_em->getClassMetadata('AppBundle:UserIncome')->getTableName();
-        $this->deleteTable($userTable);
-        $this->deleteTable($userIncomeTable);
+        $this->_deleteTable($userTable);
+        $this->_deleteTable($userIncomeTable);
         $this->output->writeln('Tables deleted');
     }
 
 
-    public function deleteTable($tableName)
+    private function _deleteTable($tableName)
     {
         $this->_executeSQL("SET FOREIGN_KEY_CHECKS=0;");
         $this->_executeSQL("Truncate table $tableName");
@@ -101,6 +107,19 @@ class ImportDataCommand extends ContainerAwareCommand
         $stmt->closeCursor();
     }
 
+    // this will create a temporary table visible only during this session
+    private function _createTemporaryTable($tableName)
+    {
+        $sql = "DROP TABLE IF EXISTS {$tableName}";
+        $this->_executeSQL($sql);
+
+        $sql = "CREATE TABLE IF NOT EXISTS {$tableName} (
+                  id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+                  postcode VARCHAR(7), 
+                  msoa VARCHAR(10)
+                  )";
+        $this->_executeSQL($sql);
+    }
 
     public function checkFilesExist()
     {
@@ -112,37 +131,36 @@ class ImportDataCommand extends ContainerAwareCommand
         return true;
     }
 
+    // import all data into the database so that we can update the income table
+    // with a simple update in sql rather than a realtime update as we import the CSV
     public function importMappingData()
     {
+        $tablename = "temp_msoa_postcode";
+        $this->_createTemporaryTable($tablename);
+
         $fh = fopen($this->_mappingFilename, "r");
 
         // first line is headers
         $headers = fgetcsv($fh);
 
-        $this->lookedUp = [];
-        $updated = 0;
-        $start = microtime(true);
+        $row = 0;
         while (($data = fgetcsv($fh)) !== false) {
-
-            // bypassing duplicate codes that were already looked up.
-            if (array_search($data[5], $this->lookedUp) == true){
-                continue;
-            }
-
-            $this->lookedUp[] =  $data[5];
-            $userIncome = $this->_em->getRepository('AppBundle:UserIncome')->findOneBy(['msoaCode' => $data[5]]);
-
-            if(!empty($userIncome)){
-                $userIncome->setPostcode($data[0]);
-                $updated++;
-                $this->output->writeLn("Records updated: {$updated} of {$this->numIncomeDataRows}");
-                $this->_em->flush();
-            }
+            $this->_executeSQL('INSERT INTO '. $tablename .' (postcode, msoa) VALUES ("'.$data[0].'", "'.$data[5].'")');
+            if ($row % 1000 == 0)
+                $this->output->writeLn($row . ' rows inserted');
+            $row++;
         }
-        $time = microtime(true) - $start;
+
+        $this->output->writeLn('Temporary table imported');
         fclose($fh);
-        $this->output->writeln($updated . ' records updated.' );
-        $this->output->writeln($time/60 . " minutes taken" );
+
+    }
+
+    // this will update the postcode on the income table with the data from the temporary table "msoa_postcode"
+    public function updatePostCodes()
+    {
+        $sql = "UPDATE user_income ui,temp_msoa_postcode t set ui.postcode = t.postcode where ui.msoa_code = t.msoa";
+        $this->_executeSQL($sql);
     }
 
 
