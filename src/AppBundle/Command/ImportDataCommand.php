@@ -154,6 +154,7 @@ class ImportDataCommand extends ContainerAwareCommand
         $headers = fgetcsv($fh);
 
         $row = 0;
+        $this->_executeSQL("BEGIN TRANSACTION");
         while (($data = fgetcsv($fh)) !== false) {
             $this->_executeSQL('INSERT INTO '. $tablename .' (postcode, msoa) VALUES ("'.$data[0].'", "'.$data[5].'")');
             if ($row % 1000 == 0)
@@ -161,6 +162,7 @@ class ImportDataCommand extends ContainerAwareCommand
             $row++;
 
         }
+        $this->_executeSQL("COMMIT");
 
         $this->output->writeLn('Temporary table imported');
         fclose($fh);
